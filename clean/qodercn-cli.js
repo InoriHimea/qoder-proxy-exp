@@ -423,7 +423,8 @@ function runQoderCnCli({
   const effort = reasoningEffort || modelRoute.reasoningEffort || process.env.QODERCN_REASONING_EFFORT;
   const windowSize = contextWindow || process.env.QODERCN_CONTEXT_WINDOW;
   const outputTokens = maxOutputTokens || process.env.QODERCN_MAX_OUTPUT_TOKENS;
-  const attachmentPath = createPromptAttachment(rootDir, prompt);
+  // Use attachment ONLY on Windows to bypass 32KB limit. On Linux (Docker), pass directly to avoid 256KB AI read limit.
+  const attachmentPath = process.platform === 'win32' ? createPromptAttachment(rootDir, prompt) : null;
   const args = buildCliArgs({
     prompt,
     model: cliModel,
@@ -456,7 +457,7 @@ function runQoderCnCli({
       settled = true;
       clearTimeout(timer);
       signal?.removeEventListener?.('abort', onAbort);
-      fs.rmSync(attachmentPath, { force: true });
+      if (attachmentPath) fs.rmSync(attachmentPath, { force: true });
       fn(value);
     };
 
@@ -590,7 +591,8 @@ function runQoderCnCliStream({
   const effort = reasoningEffort || modelRoute.reasoningEffort || process.env.QODERCN_REASONING_EFFORT;
   const windowSize = contextWindow || process.env.QODERCN_CONTEXT_WINDOW;
   const outputTokens = maxOutputTokens || process.env.QODERCN_MAX_OUTPUT_TOKENS;
-  const attachmentPath = createPromptAttachment(rootDir, prompt);
+  // Use attachment ONLY on Windows to bypass 32KB limit. On Linux (Docker), pass directly to avoid 256KB AI read limit.
+  const attachmentPath = process.platform === 'win32' ? createPromptAttachment(rootDir, prompt) : null;
   const args = buildCliArgs({
     prompt,
     model: cliModel,
@@ -625,7 +627,7 @@ function runQoderCnCliStream({
       settled = true;
       clearTimeout(timer);
       signal?.removeEventListener?.('abort', onAbort);
-      fs.rmSync(attachmentPath, { force: true });
+      if (attachmentPath) fs.rmSync(attachmentPath, { force: true });
       fn(value);
     };
 
