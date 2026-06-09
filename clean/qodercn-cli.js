@@ -238,12 +238,10 @@ function appendChunk(chunks, chunk, currentBytes) {
 }
 
 function buildCliArgs({
-  prompt,
   model,
   reasoningEffort,
   contextWindow,
   maxOutputTokens,
-  attachmentPath,
   appendSystemPrompt,
   stream,
 }) {
@@ -255,10 +253,6 @@ function buildCliArgs({
     model,
     '--dangerously-skip-permissions',
   ];
-
-  if (attachmentPath) {
-    args.push('--attachment', attachmentPath);
-  }
 
   if (appendSystemPrompt) {
     args.push('--append-system-prompt', appendSystemPrompt);
@@ -276,7 +270,6 @@ function buildCliArgs({
     args.push('--max-output-tokens', String(maxOutputTokens));
   }
 
-  args.push('--', attachmentPath ? ATTACHMENT_INSTRUCTION : prompt);
   return args;
 }
 
@@ -449,8 +442,13 @@ function runQoderCnCli({
       cwd: rootDir,
       env: buildChildEnv(rootDir, token, backend),
       windowsHide: true,
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: ['pipe', 'pipe', 'pipe'],
     });
+
+    if (child.stdin && child.stdin.writable) {
+      child.stdin.write(prompt + '\n');
+      child.stdin.end();
+    }
 
     const finish = (fn, value) => {
       if (settled) return;
@@ -619,8 +617,13 @@ function runQoderCnCliStream({
       cwd: rootDir,
       env: buildChildEnv(rootDir, token, backend),
       windowsHide: true,
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: ['pipe', 'pipe', 'pipe'],
     });
+
+    if (child.stdin && child.stdin.writable) {
+      child.stdin.write(prompt + '\n');
+      child.stdin.end();
+    }
 
     const finish = (fn, value) => {
       if (settled) return;
