@@ -319,6 +319,17 @@ func handleChatCompletionsStream(ctx *fasthttp.RequestCtx, req ChatRequest, cm *
 
 func handleModels(ctx *fasthttp.RequestCtx, cm *ConfigManager) {
 	cfg := cm.Get()
+	
+	// If the request comes from the dashboard UI, return the full model structs
+	if string(ctx.Path()) == "/dashboard/api/models" {
+		resp := map[string]interface{}{
+			"models": cfg.Models,
+		}
+		json.NewEncoder(ctx).Encode(resp)
+		return
+	}
+
+	// OpenAI Compatible Response
 	data := make([]map[string]interface{}, 0, len(cfg.Models))
 	for _, m := range cfg.Models {
 		data = append(data, map[string]interface{}{
