@@ -85,7 +85,8 @@ const routes = {
   playground: renderPlayground, 
   logs: renderLogs, 
   'system-logs': renderSystemLogs,
-  settings: renderSettings 
+  settings: renderSettings,
+  usage: renderUsage
 };
 
 function navigateTo(page) {
@@ -118,6 +119,97 @@ async function fetchStatus() {
     $('sidebar-version').textContent = `v${d.version}`;
   } catch { /* ignore */ }
 }
+
+// ── Page: Usage ──────────────────────────────────────────────────────────────
+function renderUsage() {
+  $('content').innerHTML = `
+    <div class="page-header"><div><h1 class="page-title">Usage & Credits</h1><p class="page-sub">Local usage tracking for proxy requests</p></div></div>
+    
+    <div class="card">
+      <div class="card-title">Overview</div>
+      <div id="usage-overview">Loading...</div>
+      <button class="btn btn-danger" style="margin-top: 15px;" onclick="resetUsage()">Reset Statistics</button>
+    </div>
+
+    <div class="card" style="margin-top: 20px;">
+      <div class="card-title">Recent Requests</div>
+      <div class="table-wrap" id="usage-records">Loading...</div>
+    </div>`;
+    
+  fetchUsage();
+}
+
+async function fetchUsage() {
+  try {
+    const data = await api('/usage/local');
+    
+    // Render Overview
+    let overviewHtml = `
+      <div style="display: flex; gap: 20px; margin-bottom: 20px;">
+        <div><strong>Total Requests:</strong> ${data.total_requests}</div>
+        <div><strong>Total Errors:</strong> ${data.total_errors}</div>
+      </div>
+      <h4>Requests by Model:</h4>
+      <ul>
+    `;
+    for (const [model, count] of Object.entries(data.requests_by_model || {})) {
+      overviewHtml += `<li><code>${escHtml(model)}</code>: ${count} requests</li>`;
+    }
+    overviewHtml += `</ul>`;
+    const overviewEl = $('usage-overview');
+    if (overviewEl) overviewEl.innerHTML = overviewHtml;
+
+    // Render Recent Records
+    const records = data.recent_records || [];
+    let recordsHtml = '';
+    if (records.length === 0) {
+      recordsHtml = '<div class="empty-state">No requests tracked yet.</div>';
+    } else {
+      recordsHtml = `
+        <table>
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>Model</th>
+              <th>Input Chars</th>
+              <th>Output Chars</th>
+              <th>Duration (ms)</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${records.map(r => `
+              <tr>
+                <td>${fmtTime(r.timestamp)}</td>
+                <td><code>${escHtml(r.model)}</code></td>
+                <td>${r.input_length}</td>
+                <td>${r.output_length}</td>
+                <td>${r.duration_ms}</td>
+                <td><span class="status-chip ${r.is_error ? 's5xx' : 's2xx'}">${r.is_error ? 'Error' : 'OK'}</span></td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      `;
+    }
+    const recordsEl = $('usage-records');
+    if (recordsEl) recordsEl.innerHTML = recordsHtml;
+
+  } catch (err) {
+    showToast(`Failed to load usage: ${err.message}`, 'error');
+  }
+}
+
+window.resetUsage = async () => {
+  if (!confirm('Are you sure you want to reset all local usage statistics?')) return;
+  try {
+    await api('/usage/reset-local', { method: 'POST' });
+    showToast('Usage statistics reset');
+    fetchUsage();
+  } catch (err) {
+    showToast(`Error resetting usage: ${err.message}`, 'error');
+  }
+};
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
 async function init() {

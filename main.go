@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"log"
-	"os"
 	"time"
 
 	"github.com/fasthttp/router"
@@ -17,10 +16,16 @@ func main() {
 
 	port := getEnv("PORT", "3000")
 	configPath := getEnv("CONFIG_FILE_PATH", "data/config.json")
+	usagePath := getEnv("USAGE_FILE_PATH", "data/usage.json")
 
 	cm, err := NewConfigManager(configPath)
 	if err != nil {
 		log.Fatalf("Failed to initialize config manager: %v", err)
+	}
+
+	um, err := NewUsageManager(usagePath)
+	if err != nil {
+		log.Fatalf("Failed to initialize usage manager: %v", err)
 	}
 
 	r := router.New()
@@ -28,7 +33,7 @@ func main() {
 	// ── Public Routes ────────────────────────────────────────────────────────────
 	r.GET("/", func(ctx *fasthttp.RequestCtx) {
 		ctx.SetContentType("application/json")
-		fmt.Fprintf(ctx, `{"name":"Qoder Go Proxy","version":"3.0.0","dashboard":"/dashboard/"}`)
+		fmt.Fprintf(ctx, `{"name":"Qoder Go Proxy","version":"3.1.0","dashboard":"/dashboard/"}`)
 	})
 
 	r.GET("/health", func(ctx *fasthttp.RequestCtx) {
@@ -36,12 +41,23 @@ func main() {
 		fmt.Fprintf(ctx, "ok")
 	})
 
-	// ── OpenAI Routes ────────────────────────────────────────────────────────────
+	// ── OpenAI & Anthropic Routes ───────────────────────────────────────────────
 	r.GET("/v1/models", func(ctx *fasthttp.RequestCtx) {
 		handleModels(ctx, cm)
 	})
 	r.POST("/v1/chat/completions", func(ctx *fasthttp.RequestCtx) {
-		handleChatCompletions(ctx, cm)
+		handleChatCompletions(ctx, cm, um)
+	})
+	r.POST("/v1/messages", func(ctx *fasthttp.RequestCtx) {
+		handleAnthropicMessages(ctx, cm, um)
+	})
+
+	// ── Usage API ────────────────────────────────────────────────────────────────
+	r.GET("/usage/local", func(ctx *fasthttp.RequestCtx) {
+		handleUsageLocal(ctx, um)
+	})
+	r.POST("/usage/reset-local", func(ctx *fasthttp.RequestCtx) {
+		handleUsageReset(ctx, um)
 	})
 
 	// ── Dashboard Routes ─────────────────────────────────────────────────────────

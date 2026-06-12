@@ -39,14 +39,16 @@ type ChatChunk struct {
 	} `json:"choices"`
 }
 
-func handleChatCompletions(ctx *fasthttp.RequestCtx, cm *ConfigManager) {
-	var req ChatRequest
+func handleAnthropicMessages(ctx *fasthttp.RequestCtx, cm *ConfigManager, um *UsageManager) {
+	started := time.Now()
+	var req AnthropicRequest
 	if err := json.Unmarshal(ctx.PostBody(), &req); err != nil {
 		ctx.Error("Invalid JSON", http.StatusBadRequest)
+		um.Record("unknown", 0, 0, true, time.Since(started).Milliseconds())
 		return
 	}
 
-	prompt := messagesToPrompt(req.Messages)
+	prompt := anthropicMessagesToPrompt(req)
 	opts := SpawnOptions{
 		Model:           req.Model,
 		ReasoningEffort: req.ReasoningEffort,
@@ -55,17 +57,16 @@ func handleChatCompletions(ctx *fasthttp.RequestCtx, cm *ConfigManager) {
 
 	stdout, stderrPipe, err := spawnQoderCli(ctx, prompt, opts, cm)
 	if err != nil {
-		ctx.Error(fmt.Sprintf("Spawn failed: %v", err), http.StatusInternalServerError)
+		ctx.Error(RedactSensitiveInfo(fmt.Sprintf("Spawn failed: %v", err)), http.StatusInternalServerError)
+		um.Record(req.Model, len(prompt), 0, true, time.Since(started).Milliseconds())
 		return
 	}
 	defer stdout.Close()
 	defer stderrPipe.Close()
 
-	id := fmt.Sprintf("chatcmpl-%d", time.Now().UnixNano())
-	created := time.Now().Unix()
+	id := fmt.Sprintf("msg_%d", time.Now().UnixNano())
 
 	if !req.Stream {
-		// Non-streaming: accumulate all content
 		scanner := bufio.NewScanner(stdout)
 		var fullContent strings.Builder
 		for scanner.Scan() {
@@ -78,28 +79,201 @@ func handleChatCompletions(ctx *fasthttp.RequestCtx, cm *ConfigManager) {
 				}
 			}
 		}
-		
-		resp := map[string]interface{}{
-			"id":      id,
-			"object":  "chat.completion",
-			"created": created,
-			"model":   req.Model,
-			"choices": []map[string]interface{}{
-				{
-					"index": 0,
-					"message": map[string]interface{}{
-						"role":    "assistant",
-						"content": fullContent.String(),
-					},
-					"finish_reason": "stop",
-				},
-			},
-		}
-		json.NewEncoder(ctx).Encode(resp)
+		outStr := fullContent.String()
+		json.NewEncoder(ctx).Encode(buildAnthropicFullResponse(id, req.Model, outStr))
+		um.Record(req.Model, len(prompt), len(outStr), false, time.Since(started).Milliseconds())
 		return
 	}
 
-	// Streaming: SSE
+	// Anthropic Streaming
+	ctx.SetContentType("text/event-stream")
+	ctx.Response.Header.Set("Cache-Control", "no-cache")
+	ctx.Response.Header.Set("Connection", "keep-alive")
+
+	ctx.SetBodyStreamWriter(func(w *bufio.Writer) {
+		writeEvent := func(eventType string, data interface{}) {
+			d, _ := json.Marshal(data)
+			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", eventType, d)
+			w.Flush()
+		}
+
+		writeEvent("message_start", buildAnthropicStartEvent(id, req.Model))
+		writeEvent("content_block_start", AnthropicSSEEvent{Type: "content_block_start", Index: 0, ContentBlock: &AnthropicContent{Type: "text", Text: ""}})
+
+		scanner := bufio.NewScanner(stdout)
+		outLen := 0
+		for scanner.Scan() {
+			var line map[string]interface{}
+			if err := json.Unmarshal(scanner.Bytes(), &line); err == nil {
+				if line["type"] == "assistant" {
+					if msg, ok := line["message"].(map[string]interface{}); ok {
+						if content, ok := msg["content"].(string); ok {
+							outLen += len(content)
+							writeEvent("content_block_delta", buildAnthropicDeltaEvent(content))
+						}
+					}
+				}
+			}
+		}
+
+		writeEvent("content_block_stop", AnthropicSSEEvent{Type: "content_block_stop", Index: 0})
+		writeEvent("message_delta", AnthropicSSEEvent{Type: "message_delta", Delta: &AnthropicEventDelta{Type: "message_delta", StopReason: "end_turn"}})
+		writeEvent("message_stop", AnthropicSSEEvent{Type: "message_stop"})
+		
+		um.Record(req.Model, len(prompt), outLen, false, time.Since(started).Milliseconds())
+	})
+}
+
+func handleChatCompletions(ctx *fasthttp.RequestCtx, cm *ConfigManager, um *UsageManager) {
+	started := time.Now()
+	var req ChatRequest
+	if err := json.Unmarshal(ctx.PostBody(), &req); err != nil {
+		ctx.Error("Invalid JSON", http.StatusBadRequest)
+		um.Record("unknown", 0, 0, true, time.Since(started).Milliseconds())
+		return
+	}
+
+	if req.Stream {
+		handleChatCompletionsStream(ctx, req, cm, um, started)
+		return
+	}
+
+	// Non-streaming logic with tool loop support
+	workingMessages := req.Messages
+	var finalContent string
+	var finalParsedOutput *ParsedToolOutput
+	
+	maxDepth := 5
+	for depth := 0; depth < maxDepth; depth++ {
+		prompt := messagesToPrompt(workingMessages)
+		opts := SpawnOptions{Model: req.Model, ReasoningEffort: req.ReasoningEffort, MaxTokens: req.MaxTokens}
+		
+		stdout, stderrPipe, err := spawnQoderCli(ctx, prompt, opts, cm)
+		if err != nil {
+			ctx.Error(RedactSensitiveInfo(fmt.Sprintf("Spawn failed: %v", err)), http.StatusInternalServerError)
+			um.Record(req.Model, len(prompt), 0, true, time.Since(started).Milliseconds())
+			return
+		}
+		
+		scanner := bufio.NewScanner(stdout)
+		var contentBuilder strings.Builder
+		for scanner.Scan() {
+			var line map[string]interface{}
+			if err := json.Unmarshal(scanner.Bytes(), &line); err == nil {
+				if msg, ok := line["message"].(map[string]interface{}); ok {
+					if content, ok := msg["content"].(string); ok {
+						contentBuilder.WriteString(content)
+					}
+				}
+			}
+		}
+		stdout.Close()
+		stderrPipe.Close()
+
+		finalContent = contentBuilder.String()
+		finalParsedOutput = parseToolCallOutput(finalContent)
+
+		if finalParsedOutput.Type != "tool_calls" {
+			break
+		}
+
+		// Execute tools and append to working messages
+		toolResults := []Message{}
+		var openAiToolCalls []interface{}
+		
+		for _, tc := range finalParsedOutput.ToolCalls {
+			openAiToolCalls = append(openAiToolCalls, map[string]interface{}{
+				"id": tc.ID,
+				"type": "function",
+				"function": map[string]interface{}{
+					"name": tc.Function.Name,
+					"arguments": tc.Function.Arguments,
+				},
+			})
+			
+			res := executeToolCall(tc)
+			b, _ := json.Marshal(res)
+			toolResults = append(toolResults, Message{
+				Role: "tool",
+				Content: string(b),
+			})
+		}
+		
+		workingMessages = append(workingMessages, Message{
+			Role: "assistant",
+			Content: finalParsedOutput.PrefixText,
+		})
+		
+		// To adhere strictly to OpenAI spec, tool_calls must be injected here but Go typing makes it tricky.
+		// For the proxy layer loop, we just need to append the raw results to feed back.
+		workingMessages = append(workingMessages, toolResults...)
+	}
+
+	id := fmt.Sprintf("chatcmpl-%d", time.Now().UnixNano())
+	
+	msgMap := map[string]interface{}{
+		"role": "assistant",
+		"content": finalContent,
+	}
+	
+	if finalParsedOutput != nil && finalParsedOutput.Type == "tool_calls" {
+		msgMap["content"] = finalParsedOutput.PrefixText
+		var tcs []interface{}
+		for _, tc := range finalParsedOutput.ToolCalls {
+			tcs = append(tcs, map[string]interface{}{
+				"id": tc.ID,
+				"type": "function",
+				"function": map[string]interface{}{
+					"name": tc.Function.Name,
+					"arguments": tc.Function.Arguments,
+				},
+			})
+		}
+		msgMap["tool_calls"] = tcs
+	}
+
+	resp := map[string]interface{}{
+		"id":      id,
+		"object":  "chat.completion",
+		"created": time.Now().Unix(),
+		"model":   req.Model,
+		"choices": []map[string]interface{}{
+			{
+				"index": 0,
+				"message": msgMap,
+				"finish_reason": "stop",
+			},
+		},
+	}
+	
+	if finalParsedOutput != nil && finalParsedOutput.Type == "tool_calls" {
+		resp["choices"].([]map[string]interface{})[0]["finish_reason"] = "tool_calls"
+	}
+	
+	json.NewEncoder(ctx).Encode(resp)
+	um.Record(req.Model, 0, len(finalContent), false, time.Since(started).Milliseconds())
+}
+
+func handleChatCompletionsStream(ctx *fasthttp.RequestCtx, req ChatRequest, cm *ConfigManager, um *UsageManager, started time.Time) {
+	prompt := messagesToPrompt(req.Messages)
+	opts := SpawnOptions{
+		Model:           req.Model,
+		ReasoningEffort: req.ReasoningEffort,
+		MaxTokens:       req.MaxTokens,
+	}
+
+	stdout, stderrPipe, err := spawnQoderCli(ctx, prompt, opts, cm)
+	if err != nil {
+		ctx.Error(RedactSensitiveInfo(fmt.Sprintf("Spawn failed: %v", err)), http.StatusInternalServerError)
+		um.Record(req.Model, len(prompt), 0, true, time.Since(started).Milliseconds())
+		return
+	}
+	defer stdout.Close()
+	defer stderrPipe.Close()
+
+	id := fmt.Sprintf("chatcmpl-%d", time.Now().UnixNano())
+	created := time.Now().Unix()
+
 	ctx.SetContentType("text/event-stream")
 	ctx.Response.Header.Set("Cache-Control", "no-cache")
 	ctx.Response.Header.Set("Connection", "keep-alive")
@@ -107,12 +281,14 @@ func handleChatCompletions(ctx *fasthttp.RequestCtx, cm *ConfigManager) {
 
 	ctx.SetBodyStreamWriter(func(w *bufio.Writer) {
 		scanner := bufio.NewScanner(stdout)
+		outLen := 0
 		for scanner.Scan() {
 			var line map[string]interface{}
 			if err := json.Unmarshal(scanner.Bytes(), &line); err == nil {
 				if line["type"] == "assistant" {
 					if msg, ok := line["message"].(map[string]interface{}); ok {
 						if content, ok := msg["content"].(string); ok {
+							outLen += len(content)
 							chunk := ChatChunk{
 								ID: id, Object: "chat.completion.chunk", Created: created, Model: req.Model,
 							}
@@ -136,6 +312,8 @@ func handleChatCompletions(ctx *fasthttp.RequestCtx, cm *ConfigManager) {
 		}
 		fmt.Fprintf(w, "data: [DONE]\n\n")
 		w.Flush()
+		
+		um.Record(req.Model, len(prompt), outLen, false, time.Since(started).Milliseconds())
 	})
 }
 
