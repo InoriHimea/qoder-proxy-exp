@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/fasthttp/router"
@@ -78,9 +79,24 @@ func main() {
 	r.GET("/dashboard/api/models", func(ctx *fasthttp.RequestCtx) {
 		handleModels(ctx, cm)
 	})
+	r.GET("/dashboard/api/logs", handleGetRequestLogs)
+	r.DELETE("/dashboard/api/logs", handleClearRequestLogs)
+	r.GET("/dashboard/api/logs/system", handleGetSystemLogs)
+	r.DELETE("/dashboard/api/logs/system", handleClearSystemLogs)
+
+	// Logging Middleware
+	handler := func(ctx *fasthttp.RequestCtx) {
+		r.Handler(ctx)
+		// Only log API requests, skip static files
+		path := string(ctx.Path())
+		if !strings.HasPrefix(path, "/dashboard/static") && path != "/dashboard/" {
+			AddRequestLog(string(ctx.Method()), path, ctx.Response.StatusCode())
+		}
+	}
 
 	fmt.Printf("🚀 Qoder Go Proxy starting on :%s\n", port)
-	if err := fasthttp.ListenAndServe(":"+port, r.Handler); err != nil {
+	AddSystemLog("Qoder Proxy starting...", "info", "system")
+	if err := fasthttp.ListenAndServe(":"+port, handler); err != nil {
 		log.Fatalf("Error in ListenAndServe: %s", err)
 	}
 }
