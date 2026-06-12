@@ -44,6 +44,8 @@ func spawnQoderCli(ctx context.Context, prompt string, opts SpawnOptions, cm *Co
 		cmdPath = binaryName + ".cmd"
 	}
 
+	AddSystemLog(fmt.Sprintf("Spawning %s (model: %s)", cmdPath, opts.Model), "info", "spawn")
+
 	cmd := exec.CommandContext(ctx, cmdPath, args...)
 	
 	// Set environment

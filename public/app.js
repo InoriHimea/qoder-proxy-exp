@@ -462,10 +462,28 @@ window.saveSettings = async () => {
 // (Same as before, simplified for brevity but functional)
 function renderLogs() {
   $('content').innerHTML = `
-    <div class="page-header"><div><h1 class="page-title">Logs</h1></div></div>
+    <div class="page-header"><div><h1 class="page-title">Request Logs</h1></div></div>
     <div id="log-list" class="table-wrap">Loading...</div>`;
   api('/dashboard/api/logs').then(d => {
-    $('log-list').innerHTML = d.logs.length ? `<table>${d.logs.map(l => `<tr><td>${fmtTime(l.timestamp)}</td><td>${l.method}</td><td>${l.path}</td><td>${l.statusCode}</td></tr>`).join('')}</table>` : 'No logs';
+    if (!d.logs || !d.logs.length) {
+      $('log-list').innerHTML = '<div class="empty-state">No requests yet</div>';
+      return;
+    }
+    const html = d.logs.reverse().map(l => {
+      const sseBadge = l.is_sse ? '<span class="tier-badge tier-paid">SSE</span>' : '<span class="tier-badge tier-free">Sync</span>';
+      const bodyStr = syntaxJson(l.body);
+      return `
+      <div style="border-bottom: 1px solid var(--border); padding: 15px 0;">
+        <div style="display:flex; justify-content:space-between; margin-bottom: 10px;">
+          <strong style="font-size: 14px;">${fmtTime(l.timestamp)} | ${l.method} ${l.path}</strong>
+          <div>Status: <span class="status-chip ${l.statusCode>=400?'s5xx':'s2xx'}">${l.statusCode}</span> ${sseBadge}</div>
+        </div>
+        <div style="background:var(--surface); padding:10px; border-radius:8px; font-size:13px; max-height:250px; overflow-y:auto; border: 1px solid var(--border);">
+          ${bodyStr}
+        </div>
+      </div>`;
+    }).join('');
+    $('log-list').innerHTML = html;
   });
 }
 
