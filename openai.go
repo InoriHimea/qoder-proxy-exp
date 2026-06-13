@@ -55,14 +55,13 @@ func handleAnthropicMessages(ctx *fasthttp.RequestCtx, cm *ConfigManager, um *Us
 		MaxTokens:       req.MaxTokens,
 	}
 
-	stdout, stderrPipe, err := spawnQoderCli(ctx, prompt, opts, cm)
+	stdout, err := spawnQoderCli(ctx, prompt, opts, cm)
 	if err != nil {
 		ctx.Error(RedactSensitiveInfo(fmt.Sprintf("Spawn failed: %v", err)), http.StatusInternalServerError)
 		um.Record(req.Model, len(prompt), 0, true, time.Since(started).Milliseconds())
 		return
 	}
 	defer stdout.Close()
-	defer stderrPipe.Close()
 
 	id := fmt.Sprintf("msg_%d", time.Now().UnixNano())
 
@@ -148,7 +147,7 @@ func handleChatCompletions(ctx *fasthttp.RequestCtx, cm *ConfigManager, um *Usag
 		prompt := messagesToPrompt(workingMessages)
 		opts := SpawnOptions{Model: req.Model, ReasoningEffort: req.ReasoningEffort, MaxTokens: req.MaxTokens}
 		
-		stdout, stderrPipe, err := spawnQoderCli(ctx, prompt, opts, cm)
+		stdout, err := spawnQoderCli(ctx, prompt, opts, cm)
 		if err != nil {
 			ctx.Error(RedactSensitiveInfo(fmt.Sprintf("Spawn failed: %v", err)), http.StatusInternalServerError)
 			um.Record(req.Model, len(prompt), 0, true, time.Since(started).Milliseconds())
@@ -168,7 +167,7 @@ func handleChatCompletions(ctx *fasthttp.RequestCtx, cm *ConfigManager, um *Usag
 			}
 		}
 		stdout.Close()
-		stderrPipe.Close()
+
 
 		finalContent = contentBuilder.String()
 		finalParsedOutput = parseToolCallOutput(finalContent)
@@ -262,14 +261,13 @@ func handleChatCompletionsStream(ctx *fasthttp.RequestCtx, req ChatRequest, cm *
 		MaxTokens:       req.MaxTokens,
 	}
 
-	stdout, stderrPipe, err := spawnQoderCli(ctx, prompt, opts, cm)
+	stdout, err := spawnQoderCli(ctx, prompt, opts, cm)
 	if err != nil {
 		ctx.Error(RedactSensitiveInfo(fmt.Sprintf("Spawn failed: %v", err)), http.StatusInternalServerError)
 		um.Record(req.Model, len(prompt), 0, true, time.Since(started).Milliseconds())
 		return
 	}
 	defer stdout.Close()
-	defer stderrPipe.Close()
 
 	id := fmt.Sprintf("chatcmpl-%d", time.Now().UnixNano())
 	created := time.Now().Unix()

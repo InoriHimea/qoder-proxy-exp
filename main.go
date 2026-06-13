@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"strings"
@@ -84,13 +85,69 @@ func main() {
 	r.GET("/dashboard/api/logs/system", handleGetSystemLogs)
 	r.DELETE("/dashboard/api/logs/system", handleClearSystemLogs)
 
-	// Logging Middleware
+	// ── Dashboard Authentication ──────────────────────────────────────────────────
+	r.POST("/dashboard/login", func(ctx *fasthttp.RequestCtx) {
+		pwd := string(ctx.FormValue("password"))
+		expectedPwd := getEnv("DASHBOARD_PASSWORD", "")
+		if expectedPwd != "" && pwd == expectedPwd {
+			var cookie fasthttp.Cookie
+			cookie.SetKey("qoder_dash_token")
+			cookie.SetValue("authenticated")
+			cookie.SetPath("/dashboard")
+			cookie.SetMaxAge(86400 * 30) // 30 days
+			ctx.Response.Header.SetCookie(&cookie)
+			ctx.Redirect("/dashboard/", fasthttp.StatusFound)
+			return
+		}
+		ctx.Redirect("/dashboard/login?error=1", fasthttp.StatusFound)
+	})
+
+	r.GET("/dashboard/logout", func(ctx *fasthttp.RequestCtx) {
+		var cookie fasthttp.Cookie
+		cookie.SetKey("qoder_dash_token")
+		cookie.SetValue("")
+		cookie.SetPath("/dashboard")
+		cookie.SetMaxAge(-1)
+		ctx.Response.Header.SetCookie(&cookie)
+		ctx.Redirect("/dashboard/login", fasthttp.StatusFound)
+	})
+
+	r.GET("/dashboard/login", func(ctx *fasthttp.RequestCtx) {
+		fasthttp.ServeFile(ctx, "public/index.html")
+	})
+
+	// Logging & Auth Middleware
 	handler := func(ctx *fasthttp.RequestCtx) {
-		r.Handler(ctx)
-		// Only log API requests, skip static files
 		path := string(ctx.Path())
-		if !strings.HasPrefix(path, "/dashboard/static") && path != "/dashboard/" {
-			AddRequestLog(string(ctx.Method()), path, ctx.Response.StatusCode())
+
+		// Dashboard Auth Wall
+		isDashboard := strings.HasPrefix(path, "/dashboard")
+		isLogin := path == "/dashboard/login"
+		isStatic := strings.HasPrefix(path, "/dashboard/static/")
+		
+		if isDashboard && !isLogin && !isStatic {
+			expectedPwd := getEnv("DASHBOARD_PASSWORD", "")
+			if expectedPwd != "" {
+				cookie := string(ctx.Request.Header.Cookie("qoder_dash_token"))
+				if cookie != "authenticated" {
+					ctx.Redirect("/dashboard/login", fasthttp.StatusFound)
+					return
+				}
+			}
+		}
+
+		r.Handler(ctx)
+		
+		if path == "/v1/chat/completions" || path == "/v1/messages" {
+			var bodyObj map[string]interface{}
+			json.Unmarshal(ctx.PostBody(), &bodyObj)
+			
+			isSSE := false
+			if streamVal, ok := bodyObj["stream"].(bool); ok {
+				isSSE = streamVal
+			}
+			
+			AddRequestLog(string(ctx.Method()), path, ctx.Response.StatusCode(), isSSE, bodyObj)
 		}
 	}
 
