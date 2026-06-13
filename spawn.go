@@ -27,8 +27,8 @@ func spawnQoderCli(ctx context.Context, prompt string, opts SpawnOptions, cm *Co
 		tokenVar = "QODERCN_PERSONAL_ACCESS_TOKEN"
 	}
 
-	// Prepare arguments
-	args := []string{"-p", "-f", "stream-json", "--dangerously-skip-permissions", "--permission-mode", "bypassPermissions"}
+	// Prepare arguments. Note: we must include `--` so qodercli knows the prompt comes from stdin.
+	args := []string{"-p", "-", "-f", "stream-json", "--dangerously-skip-permissions", "--permission-mode", "bypassPermissions"}
 	if opts.Model != "" {
 		args = append(args, "--model", opts.Model)
 	}
@@ -73,14 +73,17 @@ func spawnQoderCli(ctx context.Context, prompt string, opts SpawnOptions, cm *Co
 		return nil, err
 	}
 
-	// Asynchronously read stderr to prevent the process from blocking if the stderr buffer fills up
+	// Asynchronously read stderr to prevent the process from blocking
 	go func() {
 		defer stderr.Close()
 		scanner := bufio.NewScanner(stderr)
 		for scanner.Scan() {
 			line := scanner.Text()
 			if strings.TrimSpace(line) != "" {
-				AddSystemLog(fmt.Sprintf("CLI stderr: %s", line), "warn", "cli")
+				// Special handling for common warnings to reduce noise
+				if !strings.Contains(line, "MaxListenersExceededWarning") && !strings.Contains(line, "--trace-warnings") {
+					AddSystemLog(fmt.Sprintf("CLI stderr: %s", line), "warn", "cli")
+				}
 			}
 		}
 	}()
@@ -88,9 +91,21 @@ func spawnQoderCli(ctx context.Context, prompt string, opts SpawnOptions, cm *Co
 	// Write prompt to stdin asynchronously
 	go func() {
 		defer stdin.Close()
-		io.WriteString(stdin, prompt+"\n")
+		_, err := io.WriteString(stdin, prompt+"\n")
+		if err != nil {
+			AddSystemLog(fmt.Sprintf("Failed to write to CLI stdin: %v", err), "error", "spawn")
+		}
 	}()
 
-	// We don't return stderr anymore since we are consuming it here
+	// Wait for process to exit to log its status
+	go func(cmdName string) {
+		err := cmd.Wait()
+		if err != nil {
+			AddSystemLog(fmt.Sprintf("CLI %s exited with error: %v", cmdName, err), "error", "process")
+		} else {
+			AddSystemLog(fmt.Sprintf("CLI %s exited successfully", cmdName), "info", "process")
+		}
+	}(binaryName)
+
 	return stdout, nil
 }
