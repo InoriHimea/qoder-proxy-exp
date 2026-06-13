@@ -21,10 +21,8 @@ func spawnQoderCli(ctx context.Context, prompt string, opts SpawnOptions, cm *Co
 	config := cm.Get()
 	
 	binaryName := "qodercli"
-	tokenVar := "QODER_PERSONAL_ACCESS_TOKEN"
 	if strings.ToLower(config.Backend) == "cn" {
 		binaryName = "qoderclicn"
-		tokenVar = "QODERCN_PERSONAL_ACCESS_TOKEN"
 	}
 
 	// Prepare arguments. Note: we must include `--` so qodercli knows the prompt comes from stdin.
@@ -50,7 +48,7 @@ func spawnQoderCli(ctx context.Context, prompt string, opts SpawnOptions, cm *Co
 	
 	// Set environment
 	cmd.Env = os.Environ()
-	cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", tokenVar, config.Token))
+	cmd.Env = append(cmd.Env, fmt.Sprintf("QODER_API_KEY=%s", config.Token))
 	cmd.Env = append(cmd.Env, "NO_BROWSER=1", "CI=1")
 	cmd.Env = append(cmd.Env, "NODE_OPTIONS=--max-old-space-size=4096")
 
