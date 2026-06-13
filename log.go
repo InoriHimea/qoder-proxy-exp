@@ -16,12 +16,13 @@ type SystemLog struct {
 }
 
 type RequestLog struct {
-	Timestamp  string      `json:"timestamp"`
-	Method     string      `json:"method"`
-	Path       string      `json:"path"`
-	StatusCode int         `json:"statusCode"`
-	IsSSE      bool        `json:"is_sse"`
-	Body       interface{} `json:"body"`
+	Timestamp    string      `json:"timestamp"`
+	Method       string      `json:"method"`
+	Path         string      `json:"path"`
+	StatusCode   int         `json:"statusCode"`
+	IsSSE        bool        `json:"is_sse"`
+	Body         interface{} `json:"body"`
+	ResponseBody interface{} `json:"response_body"`
 }
 
 var (
@@ -44,16 +45,17 @@ func AddSystemLog(msg, level, source string) {
 	}
 }
 
-func AddRequestLog(method, path string, status int, isSSE bool, body interface{}) {
+func AddRequestLog(method, path string, status int, isSSE bool, body interface{}, responseBody interface{}) {
 	logMu.Lock()
 	defer logMu.Unlock()
 	requestLogs = append(requestLogs, RequestLog{
-		Timestamp:  time.Now().Format(time.RFC3339),
-		Method:     method,
-		Path:       path,
-		StatusCode: status,
-		IsSSE:      isSSE,
-		Body:       body,
+		Timestamp:    time.Now().Format(time.RFC3339),
+		Method:       method,
+		Path:         path,
+		StatusCode:   status,
+		IsSSE:        isSSE,
+		Body:         body,
+		ResponseBody: responseBody,
 	})
 	if len(requestLogs) > 100 {
 		requestLogs = requestLogs[len(requestLogs)-100:] // Keep last 100 requests to save memory

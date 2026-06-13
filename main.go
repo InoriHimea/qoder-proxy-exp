@@ -146,8 +146,10 @@ func main() {
 			if streamVal, ok := bodyObj["stream"].(bool); ok {
 				isSSE = streamVal
 			}
+
+			respBody := ctx.UserValue("response_body")
 			
-			AddRequestLog(string(ctx.Method()), path, ctx.Response.StatusCode(), isSSE, bodyObj)
+			AddRequestLog(string(ctx.Method()), path, ctx.Response.StatusCode(), isSSE, bodyObj, respBody)
 		}
 	}
 

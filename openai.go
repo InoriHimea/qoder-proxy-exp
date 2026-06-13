@@ -39,6 +39,24 @@ type ChatChunk struct {
 	} `json:"choices"`
 }
 
+func extractContentText(content interface{}) string {
+	if s, ok := content.(string); ok {
+		return s
+	}
+	if arr, ok := content.([]interface{}); ok {
+		var sb strings.Builder
+		for _, item := range arr {
+			if m, ok := item.(map[string]interface{}); ok {
+				if text, ok := m["text"].(string); ok {
+					sb.WriteString(text)
+				}
+			}
+		}
+		return sb.String()
+	}
+	return ""
+}
+
 func handleAnthropicMessages(ctx *fasthttp.RequestCtx, cm *ConfigManager, um *UsageManager) {
 	started := time.Now()
 	var req AnthropicRequest
@@ -72,14 +90,16 @@ func handleAnthropicMessages(ctx *fasthttp.RequestCtx, cm *ConfigManager, um *Us
 			var line map[string]interface{}
 			if err := json.Unmarshal(scanner.Bytes(), &line); err == nil {
 				if msg, ok := line["message"].(map[string]interface{}); ok {
-					if content, ok := msg["content"].(string); ok {
+					if content := extractContentText(msg["content"]); content != "" {
 						fullContent.WriteString(content)
 					}
 				}
 			}
 		}
 		outStr := fullContent.String()
-		json.NewEncoder(ctx).Encode(buildAnthropicFullResponse(id, req.Model, outStr))
+		respData := buildAnthropicFullResponse(id, req.Model, outStr)
+		ctx.SetUserValue("response_body", respData)
+		json.NewEncoder(ctx).Encode(respData)
 		um.Record(req.Model, len(prompt), len(outStr), false, time.Since(started).Milliseconds())
 		return
 	}
@@ -106,7 +126,7 @@ func handleAnthropicMessages(ctx *fasthttp.RequestCtx, cm *ConfigManager, um *Us
 			if err := json.Unmarshal(scanner.Bytes(), &line); err == nil {
 				if line["type"] == "assistant" {
 					if msg, ok := line["message"].(map[string]interface{}); ok {
-						if content, ok := msg["content"].(string); ok {
+						if content := extractContentText(msg["content"]); content != "" {
 							outLen += len(content)
 							writeEvent("content_block_delta", buildAnthropicDeltaEvent(content))
 						}
@@ -133,6 +153,7 @@ func handleChatCompletions(ctx *fasthttp.RequestCtx, cm *ConfigManager, um *Usag
 	}
 
 	if req.Stream {
+		ctx.SetUserValue("response_body", "[Streaming Response...]")
 		handleChatCompletionsStream(ctx, req, cm, um, started)
 		return
 	}
@@ -160,7 +181,7 @@ func handleChatCompletions(ctx *fasthttp.RequestCtx, cm *ConfigManager, um *Usag
 			var line map[string]interface{}
 			if err := json.Unmarshal(scanner.Bytes(), &line); err == nil {
 				if msg, ok := line["message"].(map[string]interface{}); ok {
-					if content, ok := msg["content"].(string); ok {
+					if content := extractContentText(msg["content"]); content != "" {
 						contentBuilder.WriteString(content)
 					}
 				}
@@ -285,7 +306,7 @@ func handleChatCompletionsStream(ctx *fasthttp.RequestCtx, req ChatRequest, cm *
 			if err := json.Unmarshal(scanner.Bytes(), &line); err == nil {
 				if line["type"] == "assistant" {
 					if msg, ok := line["message"].(map[string]interface{}); ok {
-						if content, ok := msg["content"].(string); ok {
+						if content := extractContentText(msg["content"]); content != "" {
 							outLen += len(content)
 							chunk := ChatChunk{
 								ID: id, Object: "chat.completion.chunk", Created: created, Model: req.Model,
