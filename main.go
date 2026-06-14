@@ -35,7 +35,7 @@ func main() {
 	// ── Public Routes ────────────────────────────────────────────────────────────
 	r.GET("/", func(ctx *fasthttp.RequestCtx) {
 		ctx.SetContentType("application/json")
-		fmt.Fprintf(ctx, `{"name":"Qoder Go Proxy","version":"3.1.0","dashboard":"/dashboard/"}`)
+		fmt.Fprintf(ctx, `{"name":"Qoder Go Proxy","version":"3.1.7","dashboard":"/dashboard/"}`)
 	})
 
 	r.GET("/health", func(ctx *fasthttp.RequestCtx) {
@@ -50,8 +50,17 @@ func main() {
 	r.POST("/v1/chat/completions", func(ctx *fasthttp.RequestCtx) {
 		handleChatCompletions(ctx, cm, um)
 	})
+	r.POST("/v/chat", func(ctx *fasthttp.RequestCtx) {
+		handleChatCompletions(ctx, cm, um)
+	})
 	r.POST("/v1/messages", func(ctx *fasthttp.RequestCtx) {
 		handleAnthropicMessages(ctx, cm, um)
+	})
+	r.POST("/v1/message", func(ctx *fasthttp.RequestCtx) {
+		handleAnthropicMessages(ctx, cm, um)
+	})
+	r.POST("/responses", func(ctx *fasthttp.RequestCtx) {
+		handleChatCompletions(ctx, cm, um)
 	})
 
 	// ── Usage API ────────────────────────────────────────────────────────────────
@@ -61,6 +70,9 @@ func main() {
 	r.POST("/usage/reset-local", func(ctx *fasthttp.RequestCtx) {
 		handleUsageReset(ctx, um)
 	})
+
+	// ── Debug API (No Auth) ──────────────────────────────────────────────────────
+	r.GET("/debug/logs", handleGetSystemLogs)
 
 	// ── Dashboard Routes ─────────────────────────────────────────────────────────
 	r.GET("/dashboard/", func(ctx *fasthttp.RequestCtx) {
@@ -138,7 +150,10 @@ func main() {
 
 		r.Handler(ctx)
 		
-		if path == "/v1/chat/completions" || path == "/v1/messages" {
+		isChatPath := path == "/v1/chat/completions" || path == "/v/chat" || path == "/responses"
+		isMsgPath := path == "/v1/messages" || path == "/v1/message"
+
+		if isChatPath || isMsgPath {
 			var bodyObj map[string]interface{}
 			json.Unmarshal(ctx.PostBody(), &bodyObj)
 			

@@ -43,6 +43,9 @@ func spawnQoderCli(ctx context.Context, prompt string, opts SpawnOptions, cm *Co
 	}
 
 	AddSystemLog(fmt.Sprintf("Spawning %s (model: %s)", cmdPath, opts.Model), "info", "spawn")
+	if config.Token == "" {
+		AddSystemLog("Warning: Personal Access Token is empty in config", "warn", "config")
+	}
 
 	cmd := exec.CommandContext(ctx, cmdPath, args...)
 	

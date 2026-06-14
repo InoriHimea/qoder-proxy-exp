@@ -43,13 +43,28 @@ func extractContentText(content interface{}) string {
 	if s, ok := content.(string); ok {
 		return s
 	}
+	if m, ok := content.(map[string]interface{}); ok {
+		if text, ok := m["text"].(string); ok {
+			return text
+		}
+		if text, ok := m["content"].(string); ok {
+			return text
+		}
+		if text, ok := m["reasoning_content"].(string); ok {
+			return text
+		}
+	}
 	if arr, ok := content.([]interface{}); ok {
 		var sb strings.Builder
 		for _, item := range arr {
 			if m, ok := item.(map[string]interface{}); ok {
 				if text, ok := m["text"].(string); ok {
 					sb.WriteString(text)
+				} else if text, ok := m["content"].(string); ok {
+					sb.WriteString(text)
 				}
+			} else if s, ok := item.(string); ok {
+				sb.WriteString(s)
 			}
 		}
 		return sb.String()
@@ -178,13 +193,19 @@ func handleChatCompletions(ctx *fasthttp.RequestCtx, cm *ConfigManager, um *Usag
 		scanner := bufio.NewScanner(stdout)
 		var contentBuilder strings.Builder
 		for scanner.Scan() {
+			rawLine := scanner.Text()
 			var line map[string]interface{}
-			if err := json.Unmarshal(scanner.Bytes(), &line); err == nil {
+			if err := json.Unmarshal([]byte(rawLine), &line); err == nil {
 				if msg, ok := line["message"].(map[string]interface{}); ok {
 					if content := extractContentText(msg["content"]); content != "" {
 						contentBuilder.WriteString(content)
 					}
+				} else {
+					// Log other types of output for debugging
+					AddSystemLog(fmt.Sprintf("CLI output (non-message): %s", rawLine), "debug", "cli")
 				}
+			} else {
+				AddSystemLog(fmt.Sprintf("Failed to parse CLI output line: %s", rawLine), "warn", "cli")
 			}
 		}
 		stdout.Close()
@@ -271,7 +292,7 @@ func handleChatCompletions(ctx *fasthttp.RequestCtx, cm *ConfigManager, um *Usag
 	}
 	
 	json.NewEncoder(ctx).Encode(resp)
-	um.Record(req.Model, 0, len(finalContent), false, time.Since(started).Milliseconds())
+	um.Record(req.Model, len(messagesToPrompt(req.Messages)), len(finalContent), false, time.Since(started).Milliseconds())
 }
 
 func handleChatCompletionsStream(ctx *fasthttp.RequestCtx, req ChatRequest, cm *ConfigManager, um *UsageManager, started time.Time) {
