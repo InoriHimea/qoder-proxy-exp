@@ -93,6 +93,7 @@ func main() {
 		handleModels(ctx, cm)
 	})
 	r.GET("/dashboard/api/logs", handleGetRequestLogs)
+	r.GET("/dashboard/api/logs/{id}", handleGetRequestLogDetail)
 	r.DELETE("/dashboard/api/logs", handleClearRequestLogs)
 	r.GET("/dashboard/api/logs/system", handleGetSystemLogs)
 	r.DELETE("/dashboard/api/logs/system", handleClearSystemLogs)
