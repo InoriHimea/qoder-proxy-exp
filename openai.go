@@ -192,6 +192,7 @@ func handleChatCompletions(ctx *fasthttp.RequestCtx, cm *ConfigManager, um *Usag
 		
 		scanner := bufio.NewScanner(stdout)
 		var contentBuilder strings.Builder
+		var cliErrorMsg string
 		for scanner.Scan() {
 			rawLine := scanner.Text()
 			var line map[string]interface{}
@@ -201,6 +202,12 @@ func handleChatCompletions(ctx *fasthttp.RequestCtx, cm *ConfigManager, um *Usag
 						contentBuilder.WriteString(content)
 					}
 				} else {
+					// Check for explicit error in result
+					if isErr, _ := line["is_error"].(bool); isErr {
+						if res, ok := line["result"].(string); ok {
+							cliErrorMsg = res
+						}
+					}
 					// Log other types of output for debugging
 					AddSystemLog(fmt.Sprintf("CLI output (non-message): %s", rawLine), "debug", "cli")
 				}
@@ -209,6 +216,12 @@ func handleChatCompletions(ctx *fasthttp.RequestCtx, cm *ConfigManager, um *Usag
 			}
 		}
 		stdout.Close()
+
+		if cliErrorMsg != "" {
+			ctx.Error(fmt.Sprintf("CLI Error: %s", cliErrorMsg), http.StatusUnauthorized)
+			um.Record(req.Model, len(prompt), 0, true, time.Since(started).Milliseconds())
+			return
+		}
 
 
 		finalContent = contentBuilder.String()

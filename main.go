@@ -35,7 +35,7 @@ func main() {
 	// ── Public Routes ────────────────────────────────────────────────────────────
 	r.GET("/", func(ctx *fasthttp.RequestCtx) {
 		ctx.SetContentType("application/json")
-		fmt.Fprintf(ctx, `{"name":"Qoder Go Proxy","version":"3.1.7","dashboard":"/dashboard/"}`)
+		fmt.Fprintf(ctx, `{"name":"Qoder Go Proxy","version":"3.1.8","dashboard":"/dashboard/"}`)
 	})
 
 	r.GET("/health", func(ctx *fasthttp.RequestCtx) {
